@@ -1,0 +1,16 @@
+{{define "file_content.html"}}<div class="file-content" id="fileContent">
+    <div class="loading" id="fileContentLoading" style="display: none;">
+        <i class="fas fa-spinner fa-spin"></i> 加载中...
+    </div>
+    <div class="empty-state" id="fileContentEmpty" style="display: block;">
+        <i class="fas fa-file-alt"></i>
+        <p>请选择一个文件查看内容</p>
+    </div>
+    <div class="content-container" id="contentContainer" style="display: none;">
+        <pre id="textContent" class="content-text"></pre>
+    </div>
+    <div class="error-message" id="errorMessage" style="display: none;">
+        <i class="fas fa-exclamation-triangle"></i>
+        <p id="errorText"></p>
+    </div>
+</div>{{end}}
