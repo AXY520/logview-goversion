@@ -1,9 +1,11 @@
 package controllers
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os/exec"
 	"time"
 
 	"logview-goversion/database"
@@ -379,5 +381,91 @@ func UpdateLogMetadata(db *database.LogDatabase) gin.HandlerFunc {
 		}
 
 		c.JSON(http.StatusOK, gin.H{"status": "success", "tags": req.Tags, "notes": req.Notes})
+	}
+}
+
+// DeviceCheck 设备在线检测
+func DeviceCheck() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req struct {
+			DeviceName string `json:"device_name"`
+		}
+
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误: " + err.Error()})
+			return
+		}
+
+		if req.DeviceName == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "设备名称不能为空"})
+			return
+		}
+
+		// 构建完整的设备地址
+		deviceAddress := req.DeviceName + ".heiyu.space"
+
+		// 执行dht命令
+		cmd := exec.Command("./dht", deviceAddress)
+		
+		// 创建缓冲区捕获输出
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+
+		// 设置超时时间（30秒）
+		err := cmd.Start()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error":   "启动检测命令失败: " + err.Error(),
+				"success": false,
+			})
+			return
+		}
+
+		// 等待命令完成
+		done := make(chan error)
+		go func() {
+			done <- cmd.Wait()
+		}()
+
+		// 设置30秒超时
+		select {
+		case err := <-done:
+			// 命令执行完成
+			output := stdout.String()
+			if stderr.Len() > 0 {
+				output = stderr.String() + "\n" + output
+			}
+
+			if err != nil {
+				// 命令执行失败，但仍返回输出
+				c.JSON(http.StatusOK, gin.H{
+					"success": false,
+					"output":  output,
+					"error":   "检测命令执行失败，设备可能离线",
+				})
+				return
+			}
+
+			// 命令执行成功
+			c.JSON(http.StatusOK, gin.H{
+				"success":       true,
+				"output":        output,
+				"device_name":   req.DeviceName,
+				"device_address": deviceAddress,
+			})
+
+		case <-time.After(30 * time.Second):
+			// 超时，终止命令
+			if cmd.Process != nil {
+				cmd.Process.Kill()
+			}
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"error":   "检测超时（30秒），设备可能离线或网络不可达",
+				"output":  stdout.String(),
+			})
+		}
 	}
 }

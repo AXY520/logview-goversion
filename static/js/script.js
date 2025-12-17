@@ -86,13 +86,32 @@ function initializeComponents() {
 // 绑定事件
 function bindEvents() {
     // 下载按钮 - 显示远程日志列表
-    document.getElementById('downloadBtn').addEventListener('click', showRemoteLogsList);
+    const downloadBtn = document.getElementById('downloadBtn');
+    if (downloadBtn) {
+        downloadBtn.addEventListener('click', showRemoteLogsList);
+    }
+    
+    // 设备检测按钮
+    const deviceCheckBtn = document.getElementById('deviceCheckBtn');
+    if (deviceCheckBtn) {
+        deviceCheckBtn.addEventListener('click', showDeviceCheckDialog);
+        console.log('设备检测按钮已绑定事件');
+    } else {
+        console.error('找不到设备检测按钮 #deviceCheckBtn');
+    }
     
     // 刷新按钮
-    document.getElementById('refreshBtn').addEventListener('click', refreshAll);
+    const refreshBtn = document.getElementById('refreshBtn');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', refreshAll);
+    }
     
     // 模态框关闭
-    document.querySelector('.close').addEventListener('click', closeModal);
+    const closeBtn = document.querySelector('.close');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', closeModal);
+    }
+    
     window.addEventListener('click', function(event) {
         const modal = document.getElementById('modal');
         if (event.target === modal) {
@@ -101,7 +120,10 @@ function bindEvents() {
     });
     
     // 下载表单提交
-    document.getElementById('downloadForm').addEventListener('submit', downloadLog);
+    const downloadForm = document.getElementById('downloadForm');
+    if (downloadForm) {
+        downloadForm.addEventListener('submit', downloadLog);
+    }
 }
 
 // 显示远程日志列表
@@ -781,12 +803,17 @@ function loadFileContent(logId, filePath) {
                 return;
             }
             
+            // 保存原始内容用于复制
+            window.currentFileContent = data.content;
+            
             // 显示文件内容
             contentContainerEl.style.display = 'block';
-            textContentEl.textContent = data.content;
             
-            // 根据文件类型应用语法高亮
-            applySyntaxHighlighting(data.type, textContentEl);
+            // 根据文件类型应用格式化和高亮
+            const isLogFile = applyContentFormatting(data.type, data.content, textContentEl, filePath);
+            
+            // 显示工具栏
+            showContentToolbar(isLogFile);
             
             // 延迟初始化搜索功能，确保不影响文件加载
             setTimeout(() => {
@@ -805,32 +832,254 @@ function loadFileContent(logId, filePath) {
         });
 }
 
-// 应用语法高亮
-function applySyntaxHighlighting(fileType, element) {
-    // 清除之前的类
+// 显示内容工具栏
+function showContentToolbar(isLogFile) {
+    const toolbar = document.getElementById('contentToolbar');
+    const filterGroup = document.getElementById('logFilterGroup');
+    const lineCount = document.getElementById('lineCount');
+    
+    if (toolbar) {
+        toolbar.style.display = 'flex';
+        
+        // 根据是否是日志文件显示过滤按钮
+        if (filterGroup) {
+            filterGroup.style.display = isLogFile ? 'flex' : 'none';
+        }
+        
+        // 更新行数统计
+        const lines = document.querySelectorAll('.log-line, .numbered-line');
+        if (lineCount && lines.length > 0) {
+            lineCount.textContent = `共 ${lines.length} 行`;
+        }
+        
+        // 绑定复制按钮
+        const copyBtn = document.getElementById('copyContentBtn');
+        if (copyBtn) {
+            copyBtn.onclick = copyFileContent;
+        }
+        
+        // 绑定过滤按钮
+        if (isLogFile) {
+            bindLogFilterButtons();
+        }
+    }
+}
+
+// 复制文件内容
+function copyFileContent() {
+    if (!window.currentFileContent) return;
+    
+    navigator.clipboard.writeText(window.currentFileContent).then(() => {
+        const btn = document.getElementById('copyContentBtn');
+        const originalHtml = btn.innerHTML;
+        btn.innerHTML = '<i class="fas fa-check"></i> 已复制';
+        btn.classList.add('btn-success');
+        
+        setTimeout(() => {
+            btn.innerHTML = originalHtml;
+            btn.classList.remove('btn-success');
+        }, 2000);
+    }).catch(err => {
+        console.error('复制失败:', err);
+        alert('复制失败，请手动选择并复制');
+    });
+}
+
+// 绑定日志过滤按钮
+function bindLogFilterButtons() {
+    const filterBtns = document.querySelectorAll('.filter-btn');
+    
+    filterBtns.forEach(btn => {
+        btn.onclick = function() {
+            const filter = this.getAttribute('data-filter');
+            
+            // 更新按钮状态
+            filterBtns.forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+            
+            // 应用过滤
+            filterLogLines(filter);
+        };
+    });
+}
+
+// 过滤日志行
+function filterLogLines(filter) {
+    const logLines = document.querySelectorAll('.log-line');
+    const lineCount = document.getElementById('lineCount');
+    let visibleCount = 0;
+    
+    logLines.forEach(line => {
+        if (filter === 'all') {
+            line.style.display = 'flex';
+            visibleCount++;
+        } else {
+            const hasLevel = line.classList.contains(`log-${filter}`);
+            line.style.display = hasLevel ? 'flex' : 'none';
+            if (hasLevel) visibleCount++;
+        }
+    });
+    
+    // 更新行数统计
+    if (lineCount) {
+        if (filter === 'all') {
+            lineCount.textContent = `共 ${logLines.length} 行`;
+        } else {
+            lineCount.textContent = `显示 ${visibleCount} / ${logLines.length} 行`;
+        }
+    }
+}
+
+// 应用内容格式化
+function applyContentFormatting(fileType, content, element, fileName) {
     element.className = 'content-text';
     
-    switch (fileType) {
-        case 'json':
-            element.classList.add('json-content');
-            // 尝试格式化JSON
-            try {
-                const parsed = JSON.parse(element.textContent);
-                element.textContent = JSON.stringify(parsed, null, 2);
-            } catch (e) {
-                // 如果解析失败，保持原样
-                console.log('JSON解析失败:', e);
-            }
-            break;
-        case 'xml':
-            element.classList.add('xml-content');
-            break;
-        case 'html':
-            element.classList.add('html-content');
-            break;
-        default:
-            element.classList.add('text-content');
+    // 判断是否是日志文件
+    const isLogFile = fileType === 'text' || fileName.toLowerCase().includes('.log') ||
+                      fileName.toLowerCase().includes('log') || content.includes('ERROR') ||
+                      content.includes('WARN') || content.includes('INFO');
+    
+    if (fileType === 'json') {
+        element.classList.add('json-content');
+        try {
+            const parsed = JSON.parse(content);
+            const formatted = JSON.stringify(parsed, null, 2);
+            element.innerHTML = addLineNumbers(syntaxHighlightJSON(formatted));
+        } catch (e) {
+            console.log('JSON解析失败:', e);
+            element.innerHTML = addLineNumbers(escapeHtml(content));
+        }
+        return false;
+    } else if (isLogFile) {
+        element.classList.add('log-content');
+        element.innerHTML = formatLogContent(content);
+        return true;
+    } else {
+        element.classList.add('text-content');
+        element.innerHTML = addLineNumbers(escapeHtml(content));
+        return false;
     }
+}
+
+// 格式化日志内容
+function formatLogContent(content) {
+    const lines = content.split('\n');
+    let html = '<div class="log-viewer">';
+    
+    lines.forEach((line, index) => {
+        const lineNum = index + 1;
+        const highlightedLine = highlightLogLine(line);
+        const logLevel = detectLogLevel(line);
+        
+        html += `<div class="log-line ${logLevel}" data-line="${lineNum}">`;
+        html += `<span class="line-number">${lineNum}</span>`;
+        html += `<span class="line-content">${highlightedLine}</span>`;
+        html += '</div>';
+    });
+    
+    html += '</div>';
+    return html;
+}
+
+// 检测日志级别
+function detectLogLevel(line) {
+    const upperLine = line.toUpperCase();
+    if (upperLine.includes('ERROR') || upperLine.includes('FATAL') || upperLine.includes('SEVERE')) {
+        return 'log-error';
+    } else if (upperLine.includes('WARN') || upperLine.includes('WARNING')) {
+        return 'log-warn';
+    } else if (upperLine.includes('INFO')) {
+        return 'log-info';
+    } else if (upperLine.includes('DEBUG') || upperLine.includes('TRACE')) {
+        return 'log-debug';
+    }
+    return '';
+}
+
+// 高亮日志行
+function highlightLogLine(line) {
+    let highlighted = escapeHtml(line);
+    
+    // 高亮时间戳 (支持多种格式)
+    highlighted = highlighted.replace(
+        /(\d{4}[-/]\d{2}[-/]\d{2}[\sT]\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:Z|[+-]\d{2}:\d{2})?)/g,
+        '<span class="log-timestamp">$1</span>'
+    );
+    
+    // 高亮日志级别
+    highlighted = highlighted.replace(
+        /\b(ERROR|FATAL|SEVERE|WARN|WARNING|INFO|DEBUG|TRACE)\b/gi,
+        '<span class="log-level-keyword">$&</span>'
+    );
+    
+    // 高亮异常类名
+    highlighted = highlighted.replace(
+        /\b([A-Z][a-zA-Z0-9]*Exception|[A-Z][a-zA-Z0-9]*Error)\b/g,
+        '<span class="log-exception">$1</span>'
+    );
+    
+    // 高亮IP地址
+    highlighted = highlighted.replace(
+        /\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b/g,
+        '<span class="log-ip">$1</span>'
+    );
+    
+    // 高亮URL
+    highlighted = highlighted.replace(
+        /(https?:\/\/[^\s]+)/g,
+        '<span class="log-url">$1</span>'
+    );
+    
+    return highlighted;
+}
+
+// 添加行号
+function addLineNumbers(content) {
+    const lines = content.split('\n');
+    let html = '<div class="line-numbered-content">';
+    
+    lines.forEach((line, index) => {
+        const lineNum = index + 1;
+        html += `<div class="numbered-line" data-line="${lineNum}">`;
+        html += `<span class="line-number">${lineNum}</span>`;
+        html += `<span class="line-content">${line}</span>`;
+        html += '</div>';
+    });
+    
+    html += '</div>';
+    return html;
+}
+
+// HTML转义
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// JSON语法高亮
+function syntaxHighlightJSON(json) {
+    if (typeof json !== 'string') {
+        json = JSON.stringify(json, null, 2);
+    }
+    
+    json = escapeHtml(json);
+    
+    return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
+        let cls = 'json-number';
+        if (/^"/.test(match)) {
+            if (/:$/.test(match)) {
+                cls = 'json-key';
+            } else {
+                cls = 'json-string';
+            }
+        } else if (/true|false/.test(match)) {
+            cls = 'json-boolean';
+        } else if (/null/.test(match)) {
+            cls = 'json-null';
+        }
+        return '<span class="' + cls + '">' + match + '</span>';
+    });
 }
 
 // 清空文件内容
@@ -1135,4 +1384,214 @@ function hideSearchControls() {
 // 转义正则表达式特殊字符
 function escapeRegExp(string) {
     return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// ====== 设备检测相关功能 ======
+
+// 显示设备检测对话框
+function showDeviceCheckDialog() {
+    const modal = document.getElementById('deviceCheckModal');
+    const resultDiv = document.getElementById('deviceCheckResult');
+    
+    // 初始化对话框内容
+    resultDiv.innerHTML = `
+        <div class="device-check-input">
+            <div class="form-group">
+                <label for="deviceNameInput">
+                    <i class="fas fa-server"></i> 请输入设备名称:
+                </label>
+                <input type="text" id="deviceNameInput" class="form-input" placeholder="例如: axy" autofocus>
+                <small class="form-hint">完整地址格式: [设备名].heiyu.space</small>
+            </div>
+            <button id="checkDeviceBtn" class="btn btn-primary btn-block">
+                <i class="fas fa-search"></i> 检测设备
+            </button>
+        </div>
+    `;
+    
+    // 显示模态框
+    modal.style.display = 'block';
+    
+    // 绑定关闭按钮
+    const closeBtn = modal.querySelector('.device-check-close');
+    closeBtn.onclick = function() {
+        modal.style.display = 'none';
+    };
+    
+    // 点击模态框外部关闭
+    window.onclick = function(event) {
+        if (event.target === modal) {
+            modal.style.display = 'none';
+        }
+    };
+    
+    // 绑定检测按钮
+    const checkBtn = document.getElementById('checkDeviceBtn');
+    checkBtn.addEventListener('click', performDeviceCheck);
+    
+    // 绑定回车键检测
+    const deviceInput = document.getElementById('deviceNameInput');
+    deviceInput.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            performDeviceCheck();
+        }
+    });
+    
+    // 自动聚焦到输入框
+    setTimeout(() => {
+        deviceInput.focus();
+    }, 100);
+}
+
+// 执行设备检测
+function performDeviceCheck() {
+    const deviceInput = document.getElementById('deviceNameInput');
+    const deviceName = deviceInput.value.trim();
+    
+    if (!deviceName) {
+        alert('请输入设备名称');
+        deviceInput.focus();
+        return;
+    }
+    
+    const resultDiv = document.getElementById('deviceCheckResult');
+    
+    // 显示加载状态
+    resultDiv.innerHTML = `
+        <div class="device-check-loading">
+            <i class="fas fa-spinner fa-spin"></i>
+            <p>正在检测设备 <strong>${deviceName}.heiyu.space</strong>...</p>
+            <small>这可能需要几秒钟时间</small>
+        </div>
+    `;
+    
+    // 调用后端API
+    fetch('/api/device-check', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ device_name: deviceName })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            showDeviceCheckError(deviceName, data.error);
+        } else {
+            showDeviceCheckResult(deviceName, data);
+        }
+    })
+    .catch(error => {
+        showDeviceCheckError(deviceName, '网络请求失败: ' + error.message);
+    });
+}
+
+// 显示设备检测结果
+function showDeviceCheckResult(deviceName, data) {
+    const resultDiv = document.getElementById('deviceCheckResult');
+    
+    // 解析返回的数据
+    const output = data.output || '';
+    const isOnline = data.success && output.includes('Connected');
+    
+    // 提取关键信息
+    let peerInfo = '';
+    let connectionInfo = '';
+    let protocols = '';
+    let addresses = '';
+    
+    // 解析输出获取详细信息
+    const lines = output.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (line.includes('Connected')) {
+            peerInfo = line.trim();
+        } else if (line.includes('ADDRS:')) {
+            addresses = line.replace('ADDRS:', '').trim();
+        } else if (line.includes('Protocols:')) {
+            protocols = line.replace('Protocols:', '').trim();
+        } else if (line.includes('共') && line.includes('peer')) {
+            connectionInfo = line.trim();
+        }
+    }
+    
+    const statusClass = isOnline ? 'status-online' : 'status-offline';
+    const statusIcon = isOnline ? 'fa-check-circle' : 'fa-times-circle';
+    const statusText = isOnline ? '在线' : '离线';
+    
+    resultDiv.innerHTML = `
+        <div class="device-check-success">
+            <div class="device-status ${statusClass}">
+                <i class="fas ${statusIcon}"></i>
+                <h3>${deviceName}.heiyu.space</h3>
+                <p class="status-text">${statusText}</p>
+            </div>
+            
+            ${isOnline ? `
+                <div class="device-details">
+                    ${peerInfo ? `
+                        <div class="detail-section">
+                            <h4><i class="fas fa-info-circle"></i> 设备信息</h4>
+                            <p class="detail-text">${escapeHtml(peerInfo)}</p>
+                        </div>
+                    ` : ''}
+                    
+                    ${connectionInfo ? `
+                        <div class="detail-section">
+                            <h4><i class="fas fa-link"></i> 连接信息</h4>
+                            <p class="detail-text">${escapeHtml(connectionInfo)}</p>
+                        </div>
+                    ` : ''}
+                </div>
+            ` : ''}
+            
+            <div class="raw-output">
+                <details>
+                    <summary><i class="fas fa-terminal"></i> 查看完整输出</summary>
+                    <pre class="output-pre">${escapeHtml(output)}</pre>
+                </details>
+            </div>
+            
+            <div class="device-check-actions">
+                <button class="btn btn-secondary" onclick="showDeviceCheckDialog()">
+                    <i class="fas fa-redo"></i> 重新检测
+                </button>
+                <button class="btn btn-primary" onclick="closeDeviceCheckModal()">
+                    <i class="fas fa-check"></i> 完成
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+// 显示设备检测错误
+function showDeviceCheckError(deviceName, errorMsg) {
+    const resultDiv = document.getElementById('deviceCheckResult');
+    
+    resultDiv.innerHTML = `
+        <div class="device-check-error">
+            <div class="error-icon">
+                <i class="fas fa-exclamation-triangle"></i>
+            </div>
+            <h3>检测失败</h3>
+            <p class="error-message">${escapeHtml(errorMsg)}</p>
+            <div class="error-details">
+                <p>设备: <strong>${deviceName}.heiyu.space</strong></p>
+            </div>
+            <div class="device-check-actions">
+                <button class="btn btn-secondary" onclick="showDeviceCheckDialog()">
+                    <i class="fas fa-redo"></i> 重试
+                </button>
+                <button class="btn btn-primary" onclick="closeDeviceCheckModal()">
+                    <i class="fas fa-times"></i> 关闭
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+// 关闭设备检测模态框
+function closeDeviceCheckModal() {
+    const modal = document.getElementById('deviceCheckModal');
+    modal.style.display = 'none';
 }

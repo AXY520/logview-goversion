@@ -57,6 +57,9 @@ func main() {
 		api.PUT("/logs/:log_id/tags", controllers.UpdateLogTags(db))
 		api.PUT("/logs/:log_id/notes", controllers.UpdateLogNotes(db))
 		api.PUT("/logs/:log_id/metadata", controllers.UpdateLogMetadata(db))
+		
+		// 设备检测API
+		api.POST("/device-check", controllers.DeviceCheck())
 	}
 
 	// 启动服务器
