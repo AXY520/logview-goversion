@@ -933,8 +933,9 @@ function filterLogLines(filter) {
     }
 }
 
-// 应用内容格式化
+// 应用内容格式化 - 优化版本
 function applyContentFormatting(fileType, content, element, fileName) {
+    const startTime = performance.now();
     element.className = 'content-text';
     
     // 判断是否是日志文件
@@ -942,46 +943,95 @@ function applyContentFormatting(fileType, content, element, fileName) {
                       fileName.toLowerCase().includes('log') || content.includes('ERROR') ||
                       content.includes('WARN') || content.includes('INFO');
     
+    // 检查文件大小（性能优化）
+    const contentSize = content.length;
+    const isLargeFile = contentSize > 500000; // 500KB
+    
+    if (isLargeFile) {
+        console.warn(`大文件警告: ${(contentSize / 1024).toFixed(2)}KB, 使用简化渲染`);
+    }
+    
     if (fileType === 'json') {
         element.classList.add('json-content');
         try {
             const parsed = JSON.parse(content);
             const formatted = JSON.stringify(parsed, null, 2);
-            element.innerHTML = addLineNumbers(syntaxHighlightJSON(formatted));
+            
+            // 大JSON文件简化渲染
+            if (isLargeFile) {
+                element.textContent = formatted;
+            } else {
+                element.innerHTML = addLineNumbers(syntaxHighlightJSON(formatted));
+            }
         } catch (e) {
             console.log('JSON解析失败:', e);
             element.innerHTML = addLineNumbers(escapeHtml(content));
         }
+        
+        const endTime = performance.now();
+        console.log(`JSON渲染完成: 耗时 ${(endTime - startTime).toFixed(2)}ms`);
         return false;
+        
     } else if (isLogFile) {
         element.classList.add('log-content');
-        element.innerHTML = formatLogContent(content);
+        
+        // 大日志文件简化渲染（不高亮）
+        if (isLargeFile) {
+            element.textContent = content;
+            console.log('大日志文件使用纯文本渲染以提升性能');
+        } else {
+            element.innerHTML = formatLogContent(content);
+        }
+        
+        const endTime = performance.now();
+        console.log(`日志渲染完成: 耗时 ${(endTime - startTime).toFixed(2)}ms`);
         return true;
+        
     } else {
         element.classList.add('text-content');
-        element.innerHTML = addLineNumbers(escapeHtml(content));
+        
+        // 大文本文件简化渲染
+        if (isLargeFile) {
+            element.textContent = content;
+        } else {
+            element.innerHTML = addLineNumbers(escapeHtml(content));
+        }
+        
+        const endTime = performance.now();
+        console.log(`文本渲染完成: 耗时 ${(endTime - startTime).toFixed(2)}ms`);
         return false;
     }
 }
 
-// 格式化日志内容
+// 格式化日志内容 - 优化版本
 function formatLogContent(content) {
     const lines = content.split('\n');
-    let html = '<div class="log-viewer">';
+    const MAX_LINES = 10000; // 限制最大行数
+    
+    // 如果行数过多，截断并警告
+    if (lines.length > MAX_LINES) {
+        console.warn(`日志行数过多 (${lines.length}行), 仅显示前${MAX_LINES}行`);
+        lines.length = MAX_LINES;
+    }
+    
+    // 使用数组join代替字符串拼接（性能优化）
+    const htmlParts = ['<div class="log-viewer">'];
     
     lines.forEach((line, index) => {
         const lineNum = index + 1;
         const highlightedLine = highlightLogLine(line);
         const logLevel = detectLogLevel(line);
         
-        html += `<div class="log-line ${logLevel}" data-line="${lineNum}">`;
-        html += `<span class="line-number">${lineNum}</span>`;
-        html += `<span class="line-content">${highlightedLine}</span>`;
-        html += '</div>';
+        htmlParts.push(
+            `<div class="log-line ${logLevel}" data-line="${lineNum}">`,
+            `<span class="line-number">${lineNum}</span>`,
+            `<span class="line-content">${highlightedLine}</span>`,
+            '</div>'
+        );
     });
     
-    html += '</div>';
-    return html;
+    htmlParts.push('</div>');
+    return htmlParts.join('');
 }
 
 // 检测日志级别
@@ -1036,21 +1086,32 @@ function highlightLogLine(line) {
     return highlighted;
 }
 
-// 添加行号
+// 添加行号 - 优化版本
 function addLineNumbers(content) {
     const lines = content.split('\n');
-    let html = '<div class="line-numbered-content">';
+    const MAX_LINES = 10000; // 限制最大行数
+    
+    // 如果行数过多，截断并警告
+    if (lines.length > MAX_LINES) {
+        console.warn(`文件行数过多 (${lines.length}行), 仅显示前${MAX_LINES}行`);
+        lines.length = MAX_LINES;
+    }
+    
+    // 使用数组join代替字符串拼接（性能优化）
+    const htmlParts = ['<div class="line-numbered-content">'];
     
     lines.forEach((line, index) => {
         const lineNum = index + 1;
-        html += `<div class="numbered-line" data-line="${lineNum}">`;
-        html += `<span class="line-number">${lineNum}</span>`;
-        html += `<span class="line-content">${line}</span>`;
-        html += '</div>';
+        htmlParts.push(
+            `<div class="numbered-line" data-line="${lineNum}">`,
+            `<span class="line-number">${lineNum}</span>`,
+            `<span class="line-content">${line}</span>`,
+            '</div>'
+        );
     });
     
-    html += '</div>';
-    return html;
+    htmlParts.push('</div>');
+    return htmlParts.join('');
 }
 
 // HTML转义
@@ -1219,9 +1280,11 @@ function saveLogMetadata(logId) {
     });
 }
 
-// 文件内容搜索功能 - 简化版本
+// 文件内容搜索功能 - 优化版本
 let originalFileContent = '';
 let currentSearchTerm = '';
+let searchDebounceTimer = null;
+const SEARCH_DEBOUNCE_DELAY = 300; // 300ms 防抖延迟
 
 // 初始化文件内容搜索
 function initializeContentSearch() {
@@ -1231,9 +1294,19 @@ function initializeContentSearch() {
     const clearBtn = document.getElementById('contentSearchClearBtn');
     
     if (searchInput) {
-        // 实时搜索
+        // 防抖搜索 - 避免频繁触发
         searchInput.addEventListener('input', function() {
-            performSearch(this.value);
+            const searchValue = this.value;
+            
+            // 清除之前的定时器
+            if (searchDebounceTimer) {
+                clearTimeout(searchDebounceTimer);
+            }
+            
+            // 设置新的定时器
+            searchDebounceTimer = setTimeout(() => {
+                performSearch(searchValue);
+            }, SEARCH_DEBOUNCE_DELAY);
         });
         
         // 回车键搜索
@@ -1266,7 +1339,7 @@ function initializeContentSearch() {
 }
 
 
-// 执行搜索
+// 执行搜索 - 优化版本
 function performSearch(searchTerm) {
     currentSearchTerm = searchTerm.trim();
     currentHighlightIndex = 0;
@@ -1285,6 +1358,14 @@ function performSearch(searchTerm) {
         return;
     }
     
+    // 搜索词太短，不执行搜索（性能优化）
+    if (currentSearchTerm.length < 2) {
+        return;
+    }
+    
+    // 使用 DocumentFragment 优化DOM操作
+    const startTime = performance.now();
+    
     // 创建正则表达式（不区分大小写）
     const regex = new RegExp(escapeRegExp(currentSearchTerm), 'gi');
     
@@ -1293,38 +1374,62 @@ function performSearch(searchTerm) {
     const hasMatches = matches && matches.length > 0;
     
     if (hasMatches) {
-        // 高亮所有匹配
-        const highlightedContent = originalFileContent.replace(regex, '<mark class="search-highlight">$&</mark>');
+        // 对于大文件，限制匹配数量（性能优化）
+        const MAX_HIGHLIGHTS = 1000;
+        if (matches.length > MAX_HIGHLIGHTS) {
+            console.warn(`搜索结果过多 (${matches.length}个), 仅高亮前${MAX_HIGHLIGHTS}个`);
+        }
+        
+        // 高亮所有匹配（使用更高效的方式）
+        const highlightedContent = originalFileContent.replace(regex, (match, offset, string) => {
+            // 限制高亮数量
+            const currentCount = (string.substring(0, offset).match(regex) || []).length;
+            if (currentCount >= MAX_HIGHLIGHTS) {
+                return match;
+            }
+            return `<mark class="search-highlight">${match}</mark>`;
+        });
+        
         textContent.innerHTML = highlightedContent;
         
+        const endTime = performance.now();
+        console.log(`搜索完成: 找到 ${Math.min(matches.length, MAX_HIGHLIGHTS)} 个匹配项, 耗时 ${(endTime - startTime).toFixed(2)}ms`);
+        
         // 滚动到第一个匹配项
-        setTimeout(() => {
+        requestAnimationFrame(() => {
             scrollToHighlight(0);
-        }, 100);
+        });
     } else {
         // 没有匹配项
         textContent.textContent = originalFileContent;
     }
 }
 
-// 滚动到指定高亮
+// 滚动到指定高亮 - 优化版本
 function scrollToHighlight(index) {
     const highlights = document.querySelectorAll('.search-highlight');
     if (highlights.length === 0) return;
     
-    // 移除所有当前高亮
-    highlights.forEach(h => h.classList.remove('current-highlight'));
+    // 确保索引在有效范围内
+    index = Math.max(0, Math.min(index, highlights.length - 1));
     
-    // 添加当前高亮
-    highlights[index].classList.add('current-highlight');
-    
-    // 滚动到高亮位置
-    highlights[index].scrollIntoView({
-        behavior: 'smooth',
-        block: 'center'
+    // 使用 requestAnimationFrame 优化性能
+    requestAnimationFrame(() => {
+        // 批量移除类（减少重绘）
+        highlights.forEach(h => h.classList.remove('current-highlight'));
+        
+        // 添加当前高亮
+        highlights[index].classList.add('current-highlight');
+        
+        // 使用更平滑的滚动
+        highlights[index].scrollIntoView({
+            behavior: 'smooth',
+            block: 'center',
+            inline: 'nearest'
+        });
+        
+        currentHighlightIndex = index;
     });
-    
-    currentHighlightIndex = index;
 }
 
 // 查找下一个

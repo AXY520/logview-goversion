@@ -14,6 +14,13 @@ import (
 	"archive/zip"
 )
 
+const (
+	// MaxFileSize 最大文件大小限制 (10MB)
+	MaxFileSize = 10 * 1024 * 1024
+	// MaxContentPreview 大文件预览大小 (500KB)
+	MaxContentPreview = 500 * 1024
+)
+
 type LogProcessor struct {
 	BaseDir    string
 	ZipDir     string
@@ -294,6 +301,26 @@ func isFile(path string) bool {
 }
 
 func (lp *LogProcessor) readFileContent(filePath string) (string, error) {
+	// 检查文件大小
+	fileInfo, err := os.Stat(filePath)
+	if err != nil {
+		return "", err
+	}
+	
+	fileSize := fileInfo.Size()
+	
+	// 如果文件超过最大限制，返回错误
+	if fileSize > MaxFileSize {
+		return "", fmt.Errorf("文件太大 (%.2f MB), 超过限制 (%.2f MB)",
+			float64(fileSize)/(1024*1024),
+			float64(MaxFileSize)/(1024*1024))
+	}
+	
+	// 如果文件很大，只读取预览部分
+	if fileSize > MaxContentPreview {
+		return lp.readFilePreview(filePath, MaxContentPreview)
+	}
+	
 	// 尝试不同编码
 	encodings := []string{"utf-8", "gbk", "latin-1"}
 
@@ -306,6 +333,24 @@ func (lp *LogProcessor) readFileContent(filePath string) (string, error) {
 
 	// 如果所有编码都失败，返回错误
 	return "", fmt.Errorf("无法读取文件: %s", filePath)
+}
+
+// readFilePreview 读取文件的预览部分
+func (lp *LogProcessor) readFilePreview(filePath string, maxBytes int64) (string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	
+	buffer := make([]byte, maxBytes)
+	n, err := file.Read(buffer)
+	if err != nil && err != io.EOF {
+		return "", err
+	}
+	
+	preview := string(buffer[:n])
+	return preview + fmt.Sprintf("\n\n... (文件太大，仅显示前 %.2f KB)", float64(maxBytes)/1024), nil
 }
 
 func (lp *LogProcessor) readFileWithEncoding(filePath, encoding string) (string, error) {
