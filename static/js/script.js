@@ -815,10 +815,13 @@ function loadFileContent(logId, filePath) {
             // 显示工具栏
             showContentToolbar(isLogFile);
             
+            // 显示搜索控件
+            showSearchControls();
+            
             // 延迟初始化搜索功能，确保不影响文件加载
             setTimeout(() => {
                 try {
-                    initSimpleSearch();
+                    initializeContentSearch();
                 } catch (error) {
                     console.error('搜索功能初始化失败:', error);
                 }
@@ -1096,12 +1099,7 @@ function clearFileContent() {
     currentFilePath = null;
     
     // 隐藏搜索控件并清除搜索
-    const searchContainer = document.getElementById('searchContainer');
-    if (searchContainer) {
-        searchContainer.style.display = 'none';
-    }
-    simpleSearchData.originalContent = '';
-    simpleSearchData.currentIndex = 0;
+    hideSearchControls();
 }
 
 // 格式化文件大小
