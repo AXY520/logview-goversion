@@ -31,10 +31,10 @@ func main() {
 	r.Use(gin.Recovery())
 
 	// 设置静态文件服务
-	r.Static("/static", "./static")
+	r.Static("/static", "./web/static")
 
 	// 设置模板
-	r.LoadHTMLGlob("templates/*.html")
+	r.LoadHTMLGlob("web/templates/*.html")
 
 	// 主页路由
 	r.GET("/", func(c *gin.Context) {

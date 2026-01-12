@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os/exec"
+	"strconv"
 	"time"
 
 	"logview-goversion/database"
@@ -207,8 +208,24 @@ func GetLogFile(db *database.LogDatabase, processor *utils.LogProcessor) gin.Han
 			return
 		}
 
-		// 获取文件内容
-		content, err := processor.GetFileContent(logID, filePath)
+		// 获取分页参数
+		offset := 0
+		limit := 0
+
+		if offsetStr := c.Query("offset"); offsetStr != "" {
+			if offsetVal, err := strconv.Atoi(offsetStr); err == nil && offsetVal >= 0 {
+				offset = offsetVal
+			}
+		}
+
+		if limitStr := c.Query("limit"); limitStr != "" {
+			if limitVal, err := strconv.Atoi(limitStr); err == nil && limitVal > 0 {
+				limit = limitVal
+			}
+		}
+
+		// 获取文件内容（支持分页）
+		content, err := processor.GetFileContentWithPagination(logID, filePath, offset, limit)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return

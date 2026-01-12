@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,10 +16,10 @@ import (
 )
 
 const (
-	// MaxFileSize 最大文件大小限制 (10MB)
-	MaxFileSize = 10 * 1024 * 1024
-	// MaxContentPreview 大文件预览大小 (500KB)
-	MaxContentPreview = 500 * 1024
+	// MaxFileSize 最大文件大小限制 (50MB)
+	MaxFileSize = 50 * 1024 * 1024
+	// MaxContentPreview 大文件预览大小 (10MB)
+	MaxContentPreview = 10 * 1024 * 1024
 )
 
 type LogProcessor struct {
@@ -265,6 +266,13 @@ func (lp *LogProcessor) buildTree(rootPath, relativePath string) (*FileNode, err
 }
 
 func (lp *LogProcessor) GetFileContent(logID, filePath string) (map[string]interface{}, error) {
+	return lp.GetFileContentWithPagination(logID, filePath, 0, 0)
+}
+
+// GetFileContentWithPagination 获取文件内容（支持分页）
+// offset: 起始行号（从0开始）
+// limit: 读取行数（0表示读取全部）
+func (lp *LogProcessor) GetFileContentWithPagination(logID, filePath string, offset, limit int) (map[string]interface{}, error) {
 	logID = fmt.Sprintf("%s", logID)
 	extractPath := filepath.Join(lp.ExtractDir, logID)
 	fullPath := filepath.Join(extractPath, filePath)
@@ -273,7 +281,63 @@ func (lp *LogProcessor) GetFileContent(logID, filePath string) (map[string]inter
 		return nil, fmt.Errorf("文件不存在: %s", filePath)
 	}
 
-	content, err := lp.readFileContent(fullPath)
+	// 获取文件信息
+	fileInfo, err := os.Stat(fullPath)
+	if err != nil {
+		return map[string]interface{}{
+			"content": fmt.Sprintf("读取文件时出错: %v", err),
+			"type":    "error",
+			"size":    0,
+		}, nil
+	}
+
+	fileSize := fileInfo.Size()
+	totalLines := lp.countLines(fullPath)
+
+	// 如果文件超过最大限制，返回错误
+	if fileSize > MaxFileSize {
+		return map[string]interface{}{
+			"content": fmt.Sprintf("文件太大 (%.2f MB), 超过限制 (%.2f MB)",
+				float64(fileSize)/(1024*1024),
+				float64(MaxFileSize)/(1024*1024)),
+			"type":       "error",
+			"size":       fileSize,
+			"totalLines": totalLines,
+		}, nil
+	}
+
+	// 如果文件很大且没有指定分页参数，只读取预览部分
+	if fileSize > MaxContentPreview && limit == 0 {
+		content, err := lp.readFilePreview(fullPath, MaxContentPreview)
+		if err != nil {
+			return map[string]interface{}{
+				"content": fmt.Sprintf("读取文件时出错: %v", err),
+				"type":    "error",
+				"size":    0,
+			}, nil
+		}
+
+		fileType := lp.detectFileType(filePath, content)
+		formattedContent := lp.formatContent(content, fileType)
+
+		return map[string]interface{}{
+			"content":     formattedContent,
+			"type":        fileType,
+			"size":        len(content),
+			"totalLines":  totalLines,
+			"isPreview":   true,
+			"previewSize": MaxContentPreview,
+		}, nil
+	}
+
+	// 读取文件内容（支持分页）
+	var content string
+	if limit > 0 {
+		content, err = lp.readFileLines(fullPath, offset, limit)
+	} else {
+		content, err = lp.readFileContent(fullPath)
+	}
+
 	if err != nil {
 		return map[string]interface{}{
 			"content": fmt.Sprintf("读取文件时出错: %v", err),
@@ -286,10 +350,90 @@ func (lp *LogProcessor) GetFileContent(logID, filePath string) (map[string]inter
 	formattedContent := lp.formatContent(content, fileType)
 
 	return map[string]interface{}{
-		"content": formattedContent,
-		"type":    fileType,
-		"size":    len(content),
+		"content":    formattedContent,
+		"type":       fileType,
+		"size":       len(content),
+		"totalLines": totalLines,
+		"offset":     offset,
+		"limit":      limit,
 	}, nil
+}
+
+// countLines 统计文件行数
+func (lp *LogProcessor) countLines(filePath string) int {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return 0
+	}
+	defer file.Close()
+
+	count := 0
+	buf := make([]byte, 32*1024) // 32KB 缓冲区
+	lineSep := []byte{'\n'}
+
+	for {
+		n, err := file.Read(buf)
+		if n > 0 {
+			count += bytes.Count(buf[:n], lineSep)
+		}
+		if err != nil {
+			break
+		}
+	}
+
+	return count
+}
+
+// readFileLines 读取文件的指定行范围
+func (lp *LogProcessor) readFileLines(filePath string, offset, limit int) (string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	// 跳过前面的行
+	currentLine := 0
+	buf := make([]byte, 32*1024)
+	var result []byte
+	var lineBuffer []byte
+
+	for {
+		n, err := file.Read(buf)
+		if n == 0 {
+			if err == io.EOF {
+				// 处理最后一行
+				if len(lineBuffer) > 0 && currentLine >= offset && (limit == 0 || currentLine < offset+limit) {
+					result = append(result, lineBuffer...)
+				}
+			}
+			break
+		}
+
+		// 处理缓冲区中的数据
+		for i := 0; i < n; i++ {
+			if buf[i] == '\n' {
+				// 完整的一行
+				if currentLine >= offset && (limit == 0 || currentLine < offset+limit) {
+					result = append(result, lineBuffer...)
+					result = append(result, '\n')
+				}
+				lineBuffer = lineBuffer[:0]
+				currentLine++
+				if limit > 0 && currentLine >= offset+limit {
+					return string(result), nil
+				}
+			} else {
+				lineBuffer = append(lineBuffer, buf[i])
+			}
+		}
+
+		if err != nil {
+			break
+		}
+	}
+
+	return string(result), nil
 }
 
 func isFile(path string) bool {
