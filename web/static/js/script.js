@@ -8,6 +8,68 @@ let currentFilePagination = {
     isPaginated: false
 };
 
+// 请求缓存（减少重复 API 调用）
+const requestCache = new Map();
+const CACHE_DURATION = 5 * 60 * 1000; // 5分钟
+
+// 性能优化：防抖函数工厂
+function debounce(fn, delay) {
+    let timer = null;
+    return function(...args) {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => fn.apply(this, args), delay);
+    };
+}
+
+// 性能优化：节流函数工厂
+function throttle(fn, limit) {
+    let inThrottle = false;
+    return function(...args) {
+        if (!inThrottle) {
+            fn.apply(this, args);
+            inThrottle = true;
+            setTimeout(() => inThrottle = false, limit);
+        }
+    };
+}
+
+// 性能优化：带缓存的请求函数
+async function cachedFetch(url, options = {}) {
+    const cacheKey = url + JSON.stringify(options);
+    const cached = requestCache.get(cacheKey);
+    
+    if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
+        return cached.data;
+    }
+    
+    try {
+        const response = await fetch(url, options);
+        const data = await response.json();
+        requestCache.set(cacheKey, { data, timestamp: Date.now() });
+        return data;
+    } catch (error) {
+        // 如果有缓存且请求失败，返回缓存（降级策略）
+        if (cached) {
+            console.warn('请求失败，返回缓存数据');
+            return cached.data;
+        }
+        throw error;
+    }
+}
+
+// 性能优化：清除过期缓存
+function clearExpiredCache() {
+    const now = Date.now();
+    for (const [key, value] of requestCache.entries()) {
+        if (now - value.timestamp > CACHE_DURATION) {
+            requestCache.delete(key);
+        }
+    }
+}
+
+// 启动缓存清理定时器
+setInterval(clearExpiredCache, 60 * 1000);
+
 // 时间格式化函数
 function formatTimeAgo(timestamp) {
     const now = new Date();
@@ -202,83 +264,102 @@ function showRemoteLogsList() {
     loadRemoteLogsList();
 }
 
-// 加载远程日志列表
+// 渲染远程日志列表
+function renderRemoteLogs(data, gridEl) {
+    if (data.error) {
+        gridEl.innerHTML = `<div class="error-message">${data.error}</div>`;
+        gridEl.style.display = 'block';
+        return;
+    }
+    
+    if (data.length === 0) {
+        gridEl.innerHTML = '<div class="empty-state"><p>没有可用的远程日志</p></div>';
+        gridEl.style.display = 'block';
+        return;
+    }
+    
+    // 渲染远程日志网格卡片 - 只显示前20条
+    gridEl.innerHTML = '';
+    const limitedData = data.slice(0, 20); // 限制为20条
+    limitedData.forEach(log => {
+        const card = document.createElement('div');
+        card.className = 'remote-log-card';
+        
+        card.innerHTML = `
+            <div class="remote-log-card-header">
+                <div class="remote-log-id">${log.id}</div>
+                <button class="download-btn-small" title="下载此日志">
+                    <i class="fas fa-download"></i>
+                </button>
+            </div>
+            <div class="remote-log-card-body">
+                <div class="log-info-row">
+                    <i class="fas fa-server"></i>
+                    <span class="info-label">微服名:</span>
+                    <span class="info-value">${log.boxname || '未知微服'}</span>
+                </div>
+                <div class="log-info-row">
+                    <i class="fas fa-clock"></i>
+                    <span class="info-label">时间:</span>
+                    <span class="info-value">${formatTimeAgo(log.createat)}</span>
+                </div>
+            </div>
+        `;
+        
+        // 绑定下载按钮事件
+        const downloadBtn = card.querySelector('.download-btn-small');
+        downloadBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            downloadLogById(log.id);
+        });
+        
+        // 点击卡片任意位置也可下载
+        card.addEventListener('click', function() {
+            downloadLogById(log.id);
+        });
+        
+        gridEl.appendChild(card);
+    });
+    
+    // 如果有更多数据，显示提示
+    if (data.length > 20) {
+        const moreInfo = document.createElement('div');
+        moreInfo.className = 'more-logs-info';
+        moreInfo.innerHTML = `
+            <i class="fas fa-info-circle"></i>
+            <span>显示前20条日志，共${data.length}条可用</span>
+        `;
+        gridEl.appendChild(moreInfo);
+    }
+    
+    gridEl.style.display = 'grid';
+}
+
+// 加载远程日志列表（带缓存）
 function loadRemoteLogsList() {
     const loadingEl = document.getElementById('remoteLogsLoading');
     const gridEl = document.getElementById('remoteLogsGrid');
+    
+    // 使用缓存请求，远程日志缓存时间更长（10分钟）
+    const cacheKey = '/api/remote-logs' + JSON.stringify({});
+    const cached = requestCache.get(cacheKey);
+    const cacheDuration = 10 * 60 * 1000; // 10分钟
+    
+    if (cached && Date.now() - cached.timestamp < cacheDuration) {
+        loadingEl.style.display = 'none';
+        renderRemoteLogs(cached.data, gridEl);
+        return;
+    }
     
     fetch('/api/remote-logs')
         .then(response => response.json())
         .then(data => {
             loadingEl.style.display = 'none';
             
-            if (data.error) {
-                gridEl.innerHTML = `<div class="error-message">${data.error}</div>`;
-                gridEl.style.display = 'block';
-                return;
-            }
+            // 保存到缓存
+            requestCache.set(cacheKey, { data, timestamp: Date.now() });
             
-            if (data.length === 0) {
-                gridEl.innerHTML = '<div class="empty-state"><p>没有可用的远程日志</p></div>';
-                gridEl.style.display = 'block';
-                return;
-            }
-            
-            // 渲染远程日志网格卡片 - 只显示前20条
-            gridEl.innerHTML = '';
-            const limitedData = data.slice(0, 20); // 限制为20条
-            limitedData.forEach(log => {
-                const card = document.createElement('div');
-                card.className = 'remote-log-card';
-                
-                card.innerHTML = `
-                    <div class="remote-log-card-header">
-                        <div class="remote-log-id">${log.id}</div>
-                        <button class="download-btn-small" title="下载此日志">
-                            <i class="fas fa-download"></i>
-                        </button>
-                    </div>
-                    <div class="remote-log-card-body">
-                        <div class="log-info-row">
-                            <i class="fas fa-server"></i>
-                            <span class="info-label">微服名:</span>
-                            <span class="info-value">${log.boxname || '未知微服'}</span>
-                        </div>
-                        <div class="log-info-row">
-                            <i class="fas fa-clock"></i>
-                            <span class="info-label">时间:</span>
-                            <span class="info-value">${formatTimeAgo(log.createat)}</span>
-                        </div>
-                    </div>
-                `;
-                
-                // 绑定下载按钮事件
-                const downloadBtn = card.querySelector('.download-btn-small');
-                downloadBtn.addEventListener('click', function(e) {
-                    e.stopPropagation();
-                    downloadLogById(log.id);
-                });
-                
-                // 点击卡片任意位置也可下载
-                card.addEventListener('click', function() {
-                    downloadLogById(log.id);
-                });
-                
-                gridEl.appendChild(card);
-            });
-            
-            // 如果有更多数据，显示提示
-            if (data.length > 20) {
-                const moreInfo = document.createElement('div');
-                moreInfo.className = 'more-logs-info';
-                moreInfo.innerHTML = `
-                    <i class="fas fa-info-circle"></i>
-                    <span>显示前20条日志，共${data.length}条可用</span>
-                `;
-                gridEl.appendChild(moreInfo);
-            }
-            
-            gridEl.style.display = 'grid';
+            renderRemoteLogs(data, gridEl);
         })
         .catch(error => {
             loadingEl.style.display = 'none';
@@ -357,7 +438,7 @@ function refreshAll() {
     }
 }
 
-// 加载日志列表
+// 加载日志列表（带缓存）
 function loadLogList() {
     const loadingEl = document.getElementById('logListLoading');
     const emptyEl = document.getElementById('logListEmpty');
@@ -374,13 +455,8 @@ function loadLogList() {
     emptyEl.style.display = 'none';
     itemsEl.innerHTML = '';
     
-    fetch('/api/logs')
-        .then(response => {
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            return response.json();
-        })
+    // 使用缓存请求
+    cachedFetch('/api/logs')
         .then(data => {
             loadingEl.style.display = 'none';
             
@@ -510,7 +586,7 @@ function deleteLog(logId) {
     });
 }
 
-// 加载文件树
+// 加载文件树（带缓存）
 function loadFileTree(logId) {
     const loadingEl = document.getElementById('fileTreeLoading');
     const emptyEl = document.getElementById('fileTreeEmpty');
@@ -520,6 +596,25 @@ function loadFileTree(logId) {
     loadingEl.style.display = 'block';
     emptyEl.style.display = 'none';
     containerEl.innerHTML = '';
+    
+    // 使用缓存请求
+    const cacheKey = `/api/logs/${logId}/files`;
+    const cached = requestCache.get(cacheKey);
+    const cacheDuration = 5 * 60 * 1000; // 5分钟
+    
+    if (cached && Date.now() - cached.timestamp < cacheDuration) {
+        loadingEl.style.display = 'none';
+        console.log('使用缓存的文件树数据');
+        const treeHtml = renderFileTree(cached.data, logId);
+        containerEl.innerHTML = treeHtml;
+        bindTreeEvents();
+        bindSearchEvents();
+        saveInitialFolderStates();
+        setTimeout(() => {
+            openDefaultFile(logId);
+        }, 100);
+        return;
+    }
     
     fetch(`/api/logs/${logId}/files`)
         .then(response => response.json())
@@ -1514,7 +1609,7 @@ function filterLogLines(filter) {
     }
 }
 
-// 应用内容格式化 - 优化版本
+// 应用内容格式化
 function applyContentFormatting(fileType, content, element, fileName, offset = 0) {
     const startTime = performance.now();
     element.className = 'content-text';
@@ -1524,26 +1619,12 @@ function applyContentFormatting(fileType, content, element, fileName, offset = 0
                       fileName.toLowerCase().includes('log') || content.includes('ERROR') ||
                       content.includes('WARN') || content.includes('INFO');
     
-    // 检查文件大小（性能优化）
-    const contentSize = content.length;
-    const isLargeFile = contentSize > 500000; // 500KB
-    
-    if (isLargeFile) {
-        console.warn(`大文件警告: ${(contentSize / 1024).toFixed(2)}KB, 使用简化渲染`);
-    }
-    
     if (fileType === 'json') {
         element.classList.add('json-content');
         try {
             const parsed = JSON.parse(content);
             const formatted = JSON.stringify(parsed, null, 2);
-            
-            // 大JSON文件简化渲染
-            if (isLargeFile) {
-                element.textContent = formatted;
-            } else {
-                element.innerHTML = addLineNumbers(syntaxHighlightJSON(formatted), offset);
-            }
+            element.innerHTML = addLineNumbers(syntaxHighlightJSON(formatted), offset);
         } catch (e) {
             console.log('JSON解析失败:', e);
             element.innerHTML = addLineNumbers(escapeHtml(content), offset);
@@ -1555,14 +1636,7 @@ function applyContentFormatting(fileType, content, element, fileName, offset = 0
         
     } else if (isLogFile) {
         element.classList.add('log-content');
-        
-        // 大日志文件简化渲染（不高亮）
-        if (isLargeFile) {
-            element.textContent = content;
-            console.log('大日志文件使用纯文本渲染以提升性能');
-        } else {
-            element.innerHTML = formatLogContent(content, offset);
-        }
+        element.innerHTML = formatLogContent(content, offset);
         
         const endTime = performance.now();
         console.log(`日志渲染完成: 耗时 ${(endTime - startTime).toFixed(2)}ms`);
@@ -1570,13 +1644,7 @@ function applyContentFormatting(fileType, content, element, fileName, offset = 0
         
     } else {
         element.classList.add('text-content');
-        
-        // 大文本文件简化渲染
-        if (isLargeFile) {
-            element.textContent = content;
-        } else {
-            element.innerHTML = addLineNumbers(escapeHtml(content), offset);
-        }
+        element.innerHTML = addLineNumbers(escapeHtml(content), offset);
         
         const endTime = performance.now();
         console.log(`文本渲染完成: 耗时 ${(endTime - startTime).toFixed(2)}ms`);
@@ -1584,16 +1652,9 @@ function applyContentFormatting(fileType, content, element, fileName, offset = 0
     }
 }
 
-// 格式化日志内容 - 优化版本
+// 格式化日志内容
 function formatLogContent(content, offset = 0) {
     const lines = content.split('\n');
-    const MAX_LINES = 10000; // 限制最大行数
-    
-    // 如果行数过多，截断并警告
-    if (lines.length > MAX_LINES) {
-        console.warn(`日志行数过多 (${lines.length}行), 仅显示前${MAX_LINES}行`);
-        lines.length = MAX_LINES;
-    }
     
     // 使用数组join代替字符串拼接（性能优化）
     const htmlParts = ['<div class="log-viewer">'];
@@ -1667,16 +1728,9 @@ function highlightLogLine(line) {
     return highlighted;
 }
 
-// 添加行号 - 优化版本
+// 添加行号
 function addLineNumbers(content, offset = 0) {
     const lines = content.split('\n');
-    const MAX_LINES = 10000; // 限制最大行数
-    
-    // 如果行数过多，截断并警告
-    if (lines.length > MAX_LINES) {
-        console.warn(`文件行数过多 (${lines.length}行), 仅显示前${MAX_LINES}行`);
-        lines.length = MAX_LINES;
-    }
     
     // 使用数组join代替字符串拼接（性能优化）
     const htmlParts = ['<div class="line-numbered-content">'];

@@ -96,7 +96,6 @@ body {
     height: 100vh;
     padding: 1rem;
     gap: 1rem;
-    transition: all 0.3s;
 }
 
 .panel {
@@ -201,7 +200,6 @@ body {
 /* 日志列表面板 */
 .log-list-panel {
     flex: 0 0 300px;
-    transition: all 0.3s ease;
     position: relative;
     overflow: hidden;
 }
@@ -665,7 +663,7 @@ body {
     padding: 1rem;
     border-radius: 4px;
     max-height: 100%;
-    overflow: hidden;
+    overflow: auto;
 }
 
 .content-text:hover {
